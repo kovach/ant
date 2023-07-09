@@ -83,12 +83,12 @@ instance : ToString C where
   | .chosenSeq => "chosenSeq"
   | .chooseOne => "choose"
 
-instance C.Inhabited : Inhabited C := ⟨chosenSeq⟩
+instance C.Inhabited : Inhabited C := ⟨.seq⟩
 
 abbrev Delta := Frame
 abbrev Time := Frame × Delta
 abbrev Guard := List Atom
-abbrev Rule := Guard × Query
+abbrev Rule := String × Guard × Query
 abbrev Program := List Rule
 
 abbrev M := StateM Nat
@@ -98,7 +98,7 @@ def freshStr : M String := do let n ← fresh; pure s!"v{n}"
 inductive State
 | node    (type : C) (focus : Option State) (now : Frame) (children : Array State)
 | new     (type : C) (delta : Frame)
-| query   (ctx : PartialBinding) (q : Query)
+| query   (n : String) (ctx : PartialBinding) (q : Query)
 | invalid (error : String) (cause : State)
 | nil
 deriving Inhabited
@@ -109,22 +109,15 @@ match s with
   let x := match focus with | none =>  "" | some v => s!"{v.pp} "
   s!"(node {t} {x}\n{f}\n{cs.map State.pp})"
 | new .. => "new"
-| query .. => "query"
+| query name .. => s!"(query {name})"
 | nil => "nil"
-| invalid msg s => s!"(invalid ({msg}): {s.pp})"
+| invalid msg s => s!"\n\n\n(invalid ({msg}): {s.pp})\n\n\n"
 
 inductive Choice | index (n : ℕ)
 
 def newVars (config : Binding) (new : List Var) : M Binding :=
   let cause := config.toCause
   new.foldlM (init := config) fun ctx v => do { let e ← fresh; pure $ ctx.cons v (.entity e cause) }
-
-def Effect.do (e : Effect) (ctx : Binding) : M State := do
-  let ctx' ← newVars ctx e.new
-  let tupleLists := e.value.map (doNewTuples ctx')
-  let freed := e.free.filterMap fun v => match ctx.find! v with | .entity n _ => some n | _ => panic! s!"type error: [{v}] refers to non-entity" -- hmm
-  pure $ .node C.seq none {} $ List.toArray $ tupleLists.map fun created =>
-           .new default ⟨Data.ofTuples created, freed.toArray⟩
 
 def State.terminal : State → Bool
 | node _ none _ cs => cs.size == 0
@@ -136,26 +129,33 @@ partial def State.frame : State → Frame
 -- | node /-todo?-/ _ cs => cs.map State.frame |>.foldl Frame.append {}
 | _ => {}
 
+def Effect.do (e : Effect) (ctx : Binding) (w : Frame) : M State := do
+  let ctx' ← newVars ctx e.new
+  let tupleLists := e.value.map (doNewTuples ctx')
+  let freed := e.free.filterMap fun v => match ctx.find! v with | .entity n _ => some n | _ => panic! s!"type error: [{v}] refers to non-entity" -- hmm
+  pure $ .node C.seq none w $ List.toArray $ tupleLists.map fun created =>
+           .new default ⟨Data.ofTuples created, freed.toArray⟩
+
 def State.advance (p : Program) (w : Frame) : State → M State
+| s@(node .seq none w' cs) => pure $ match cs.back? with
+  | none => invalid "internal error" s -- should match higher level
+  | some v => .node .seq (some v) w' cs.pop
 | node t (some s) w' s' =>
   if s.terminal then pure $ node t none (w' ++ s.frame) s'
   else do pure $ node t (some (← s.advance p w')) w' s'
 | new type delta =>
   let now := w ++ delta
   let states : Array State := List.foldl Array.append #[] $
-    p.map fun (guard, q) => (eval_aux delta.tuples {} #[] guard).map fun ctx => query ctx q
-  pure $ node type none now states
-| query ctx q =>
+    p.map fun (name, guard, q) => (eval_aux delta.tuples {} #[] guard).map fun ctx => query name ctx q
+  pure $ node type none now states.reverse
+| query name ctx q =>
   match q with
-  | .effect e => e.do ctx.toBinding
+  | .effect e => e.do ctx.toBinding w
   | .step type q qs => pure $
-    let nodes : Array State := eval w.tuples ctx q |>.map fun b => .query b qs
+    let nodes : Array State := eval w.tuples ctx q |>.map fun b => .query name b qs
     match type with
     | .all => node .seq none w nodes -- todo, use chosenSeq
     | .chooseOne => node .chooseOne none w nodes
-| s@(node .seq none w' cs) => pure $ match cs.back? with
-  | none => invalid "internal error" s -- should match higher level
-  | some v => .node .seq (some v) w' cs.pop
 -- node, chooseOne, invalid
 | s => pure $ invalid "cannot advance" s
 
@@ -178,24 +178,30 @@ def q_ (n) := eval (db n) (ctx := {}) [⟨ "p", ["x"]⟩, ⟨"p", ["y"]⟩]
 
 def a1 : Atom := ⟨"p", ["x"]⟩
 def a2 : Atom := ⟨"q", ["x", "y"]⟩
-def a3 : Atom := ⟨"ev1", ["x"]⟩
-def e1 : Effect := ⟨ [], [], [[⟨"ev2", ["x"]⟩]]⟩
-def r1 : Rule := ([a3], .step .all [] $ .effect e1)
+def a_1 : Atom := ⟨"ev1", ["x"]⟩
+def a_2 : Atom := ⟨"ev2", ["x"]⟩
+def a_3 : Atom := ⟨"ev3", ["y"]⟩
+def a_4 : Atom := ⟨"ev4", ["x"]⟩
+def e2 : Effect := ⟨ [], [], [[a_2]]⟩
+def e3 : Effect := ⟨ [], [], [[a_3]]⟩
+def e4 : Effect := ⟨ [], [], [[a_4]]⟩
+def r (name : String) (g : Atom) (a : List Atom) (e : Effect) : Rule := (name, [g], .step .all a $ .effect e)
+def r1 : Rule := ("r1", [a_1], .step .all [] $ .effect e2)
 def p1 : Program := [r1]
+def p2 : Program := [r "1" a_1 [] e2, r "2" a_1 [a1, a2] e3, r "3" a_2 [a_3] e4]
 
 def t1 : Tuple := ⟨"ev1", #[.nat 0]⟩
-def d1 : Data := Data.ofTuples [⟨"ev1", #[.entity 0 []]⟩]
+def d0 : Data := Data.ofTuples [⟨"p", #[0]⟩, ⟨"q", #[0, 1]⟩]
+def d1 : Data := Data.ofTuples [⟨"ev1", #[0]⟩]
 def s1 : State := .new .seq ⟨d1, #[]⟩
 def f1 : Frame := ⟨d1, #[]⟩
 
-#eval eval_aux d1 (List.toAssocList []) #[] [a3] |> toString
-#eval eval d1 (List.toAssocList []) [⟨ "p", ["x"]⟩] |> toString
+--#eval eval_aux d1 (List.toAssocList []) #[] [a_3] |> toString
+--#eval eval d1 (List.toAssocList []) [⟨ "p", ["x"]⟩] |> toString
 
-def State.adv (n : Nat) : State → State
-| s => s.advanceFix p1 {} n |>.run' 0
+def State.adv (n : Nat) (p : Program) : State → State
+| s => s.advanceFix p ⟨d0, #[]⟩ n |>.run' 0
 
-#eval let s := s1.adv 10; (s.terminal, s.frame, s.pp)
-#eval let s := s1.adv 3; IO.print s.pp
-#eval let s := (State.node .seq none f1 #[]).adv 0; (s.terminal, s.frame, s.pp)
-
+#eval let s := s1.adv 30 p2; (s.terminal, s.frame, s.pp)
+#eval let s := s1.adv 30 p2; IO.print s.pp
 end DC
