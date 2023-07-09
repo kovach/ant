@@ -1,12 +1,14 @@
-import DC.Basic
+import DC.Basic2
 import Lean
+
+namespace DC
 
 open Lean Elab Meta
 
 declare_syntax_cat dc_rel
 declare_syntax_cat dc_var
 declare_syntax_cat dc_var_binding
-declare_syntax_cat dc_clause
+declare_syntax_cat dc_clause -- rename this atom
 declare_syntax_cat dc_query
 syntax ident : dc_rel
 syntax ident : dc_var
@@ -24,29 +26,29 @@ partial def elabVar : Syntax → MetaM Expr
 | `(dc_var| $r:ident) => pure $ mkStrLit r.getId.toString
 | _ => throwUnsupportedSyntax
 
-partial def elabVarBinding : Syntax → MetaM Expr
-| `(dc_var_binding| $r:ident) => mkAppM ``Prod.mk #[mkStrLit r.getId.toString, .const ``QuantifierType.all []]
-| `(dc_var_binding| ! $r:ident) => do
-    let quant ← mkAppM ``QuantifierType.eq #[mkNatLit 1, mkStrLit "player"]
-    mkAppM ``Prod.mk #[mkStrLit r.getId.toString, quant]
-| _ => throwUnsupportedSyntax
+--partial def elabVarBinding : Syntax → MetaM Expr
+----| `(dc_var_binding| $r:ident) => mkAppM ``Prod.mk #[mkStrLit r.getId.toString, .const ``QuantifierType.all []]
+--| `(dc_var_binding| ! $r:ident) => do
+--    let quant ← mkAppM ``QuantifierType.eq #[mkNatLit 1, mkStrLit "player"]
+--    mkAppM ``Prod.mk #[mkStrLit r.getId.toString, quant]
+--| _ => throwUnsupportedSyntax
 
 partial def elabClause : Syntax → MetaM Expr
 | `(dc_clause| $r:dc_rel $vars:dc_var*) => do
   let vars ← List.mapM vars.toList (f := fun v => elabVar v.raw)
-  mkAppM ``Clause.mk #[(← elabRel r), (← mkListLit (.const ``String []) vars)]
+  mkAppM ``Atom.mk #[(← elabRel r), (← mkListLit (.const ``String []) vars)]
 | _ => throwUnsupportedSyntax
 
 partial def elabQuery : Syntax → MetaM Expr
 | `(dc_query| $c:dc_clause,*) => do
   let c ← c.getElems.mapM fun c => elabClause c
-  let clauses ← mkListLit (.const ``Clause []) c.toList
+  let clauses ← mkListLit (.const ``Atom []) c.toList
   mkAppM ``Query.ofList #[clauses]
-| `(dc_query| [ $v* ] $c:dc_clause,*) => do
-  let v ← v.mapM elabVarBinding
-  let c ← c.getElems.mapM elabClause
-  mkAppM ``Query.mk #[(← mkListLit (.const ``QuantifiedVar []) v.toList), (← mkListLit (.const ``Clause []) c.toList)]
-  --let vars := defaultQueryVars c
+--| `(dc_query| [ $v* ] $c:dc_clause,*) => do
+--  let v ← v.mapM elabVarBinding
+--  let c ← c.getElems.mapM elabClause
+--  mkAppM ``Query.mk #[(← mkListLit (.const ``QuantifiedVar []) v.toList), (← mkListLit (.const ``Atom []) c.toList)]
+--  --let vars := defaultQueryVars c
 | _ => throwUnsupportedSyntax
 
 
@@ -63,3 +65,5 @@ elab ">>"  p:dc_query "<<" : term => elabQuery p
   [x !y z] p y z, q x
 <<
 #eval >> [land !token] token_located token land <<
+
+end DC
