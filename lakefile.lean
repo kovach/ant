@@ -1,16 +1,16 @@
 import Lake
 open Lake DSL
 
-package «dc» {
+package «ant» {
   -- add package configuration options here
 }
 
-lean_lib «DC» {
+lean_lib «Ant» {
   -- add library configuration options here
 }
 
 @[default_target]
-lean_exe «dc» {
+lean_exe «ant» {
   root := `Main
 }
 

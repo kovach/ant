@@ -1,8 +1,8 @@
 import Std.Data.List.Basic
 import Std.Data.HashMap
-import DC.Basic2
+import Ant.Basic2
 
-namespace DC
+namespace Ant
 
 open Std (AssocList HashMap)
 
@@ -204,4 +204,9 @@ def State.adv (n : Nat) (p : Program) : State → State
 
 #eval let s := s1.adv 30 p2; (s.terminal, s.frame, s.pp)
 #eval let s := s1.adv 30 p2; IO.print s.pp
-end DC
+
+def test1 := let s := s1.adv 30 p2; IO.print s.pp
+
+end Ant
+
+def main : IO Unit := Ant.test1

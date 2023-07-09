@@ -1,6 +1,6 @@
-import DC.Misc
+import Ant.Misc
 
-namespace DC
+namespace Ant
 
 set_option autoImplicit false
 
@@ -157,4 +157,4 @@ def World.effect (w : World) (new : List Var) (effect : List Atom)
   let (n, tuples) := doEffect w.counter config new effect
   {counter := n, tuples := tuples.foldl (init := w.tuples) Data.insert}
 end Effect
-end DC
+end Ant
