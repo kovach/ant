@@ -1,15 +1,13 @@
 import Std.Data.List.Basic
 import Std.Data.HashMap
-import Ant.Basic2
+import Ant.Basic
 
 namespace Ant
 
 open Std (AssocList HashMap)
 
-instance : OfNat Value n := ⟨ .entity n [] ⟩
-
-def eval_aux' (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding) (k : PartialBinding → Array PartialBinding → List Atom → Array PartialBinding)
-    : Atom → List Atom → Array PartialBinding
+def eval_aux' (db : Data) (ctx : Binding) (acc : Array Binding) (k : Binding → Array Binding → List Atom → Array Binding)
+    : Atom → List Atom → Array Binding
 | c, cs =>
   match db.find? c.relation with
   | none => #[]
@@ -23,9 +21,9 @@ def eval_aux' (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding) (k
           | none => pure ()
           | some ctx =>
             match ctx.find? v with
-            | some none => panic! s!"here: {v}" -- needed?
-            | none => ctx' := some  $ ctx.cons v (some $ t.2.get! i)
-            | some (some v') => if v' = t.2.get! i then pure () else ctx' := none
+            --| some none => panic! s!"here: {v}" -- needed?
+            | none => ctx' := some  $ ctx.cons v (t.2.get! i)
+            | some v' => if v' = t.2.get! i then pure () else ctx' := none
       match ctx' with
       | none => pure ()
       -- recurse
@@ -33,8 +31,8 @@ def eval_aux' (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding) (k
     pure results
 
 -- todo remove
-def eval_aux (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding)
-    : List Atom → Array PartialBinding
+def eval_aux (db : Data) (ctx : Binding) (acc : Array Binding)
+    : List Atom → Array Binding
 | [] => acc.push ctx
 | c :: cs =>
   match db.find? c.relation with
@@ -49,9 +47,9 @@ def eval_aux (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding)
           | none => pure ()
           | some ctx =>
             match ctx.find? v with
-            | some none => panic! s!"here: {v}" -- needed?
-            | none => ctx' := some  $ ctx.cons v (some $ t.2.get! i)
-            | some (some v') => if v' = t.2.get! i then pure () else ctx' := none
+            --| some none => panic! s!"here: {v}" -- needed?
+            | none => ctx' := some  $ ctx.cons v (t.2.get! i)
+            | some v' => if v' = t.2.get! i then pure () else ctx' := none
       match ctx' with
       | none => pure ()
       -- recurse
@@ -59,7 +57,7 @@ def eval_aux (db : Data) (ctx : PartialBinding) (acc : Array PartialBinding)
     pure results
 
 -- returns all matches (once) that involve at least one tuple from `new`
-partial def seminaive (old new total : Data) (ctx : PartialBinding) (acc : Array PartialBinding) : List Atom → Array PartialBinding
+partial def seminaive (old new total : Data) (ctx : Binding) (acc : Array Binding) : List Atom → Array Binding
 | [] => acc -- never matched new tuple, current ctx invalid
 | [c] => -- small optimization
   -- must match new tuple
@@ -71,8 +69,8 @@ partial def seminaive (old new total : Data) (ctx : PartialBinding) (acc : Array
   let matchNewLater temp := eval_aux' old ctx temp (seminaive old new total) c cs
   acc |> matchNewNow |> matchNewLater
 
-def eval (db : Data) (ctx : PartialBinding) : List Atom → Array PartialBinding := eval_aux db ctx #[]
-def seminaive_eval (old new total : Data) (ctx : PartialBinding) : List Atom → Array PartialBinding := seminaive old new total ctx #[]
+def eval (db : Data) (ctx : Binding) : List Atom → Array Binding := eval_aux db ctx #[]
+def seminaive_eval (old new total : Data) (ctx : Binding) : List Atom → Array Binding := seminaive old new total ctx #[]
 
 -- todo: simultaneous
 inductive C | seq | chosenSeq | chooseOne
@@ -98,20 +96,21 @@ def freshStr : M String := do let n ← fresh; pure s!"v{n}"
 inductive State
 | node    (type : C) (focus : Option State) (now : Frame) (children : Array State)
 | new     (type : C) (delta : Frame)
-| query   (n : String) (ctx : PartialBinding) (q : Query)
+| query   (n : String) (ctx : Binding) (q : Query)
 | invalid (error : String) (cause : State)
 | nil
 deriving Inhabited
+
 partial def State.pp (s : State) : String :=
-match s with
-| node t none f cs => s!"(node {t}\n{f}\n{cs.map State.pp})"
-| node t focus f cs =>
-  let x := match focus with | none =>  "" | some v => s!"{v.pp} "
-  s!"(node {t} {x}\n{f}\n{cs.map State.pp})"
-| new .. => "new"
-| query name .. => s!"(query {name})"
-| nil => "nil"
-| invalid msg s => s!"\n\n\n(invalid ({msg}): {s.pp})\n\n\n"
+  match s with
+  | node t none f cs => s!"(node {t}\n{f}\n{cs.map State.pp})"
+  | node t focus f cs =>
+    let x := match focus with | none =>  "" | some v => s!"{v.pp} "
+    s!"(node {t} {x}\n{f}\n{cs.map State.pp})"
+  | new .. => "new"
+  | query name .. => s!"(query {name})"
+  | nil => "nil"
+  | invalid msg s => s!"\n\n\n(invalid ({msg}): {s.pp})\n\n\n"
 
 inductive Choice | index (n : ℕ)
 
@@ -121,6 +120,7 @@ def newVars (config : Binding) (new : List Var) : M Binding :=
 
 def State.terminal : State → Bool
 | node _ none _ cs => cs.size == 0
+| query _ _ .nil => true
 | _ => false
 
 -- only valid for terminal States
@@ -129,12 +129,15 @@ partial def State.frame : State → Frame
 -- | node /-todo?-/ _ cs => cs.map State.frame |>.foldl Frame.append {}
 | _ => {}
 
-def Effect.do (e : Effect) (ctx : Binding) (w : Frame) : M State := do
-  let ctx' ← newVars ctx e.new
-  let tupleLists := e.value.map (doNewTuples ctx')
-  let freed := e.free.filterMap fun v => match ctx.find! v with | .entity n _ => some n | _ => panic! s!"type error: [{v}] refers to non-entity" -- hmm
-  pure $ .node C.seq none w $ List.toArray $ tupleLists.map fun created =>
-           .new default ⟨Data.ofTuples created, freed.toArray⟩
+def doEffect
+    (name : String) (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
+    (ctx : Binding) (w : Frame) : M State := do
+  let ctx' ← newVars ctx new
+  let created := doNewTuples ctx' value
+  let freed := free.filterMap fun v => match ctx.find! v with | .entity n _ => some n | _ => panic! s!"type error: [{v}] refers to non-entity" -- hmm
+  let newNode : State := .new default ⟨Data.ofTuples created, freed.toArray⟩
+  let node : State := .node .seq none w #[newNode, .query name ctx' cont]
+  pure node
 
 def State.advance (p : Program) (w : Frame) : State → M State
 | s@(node .seq none w' cs) => pure $ match cs.back? with
@@ -148,15 +151,15 @@ def State.advance (p : Program) (w : Frame) : State → M State
   let states : Array State := List.foldl Array.append #[] $
     p.map fun (name, guard, q) => (eval_aux delta.tuples {} #[] guard).map fun ctx => query name ctx q
   pure $ node type none now states.reverse
-| query name ctx q =>
+| s@(query name ctx q) =>
   match q with
-  | .effect e => e.do ctx.toBinding w
+  | .nil => pure $ .invalid "cannot advance nil query" s
+  | .effect n f atoms k => doEffect name n f atoms k ctx w
   | .step type q qs => pure $
     let nodes : Array State := eval w.tuples ctx q |>.map fun b => .query name b qs
     match type with
     | .all => node .seq none w nodes -- todo, use chosenSeq
     | .chooseOne => node .chooseOne none w nodes
--- node, chooseOne, invalid
 | s => pure $ invalid "cannot advance" s
 
 partial def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
@@ -167,8 +170,6 @@ partial def State.advanceFix (p : Program) (w : Frame) : Nat → State → M Sta
   | invalid .. => pure s
   | _ => s'.advanceFix p w n
 
---def q1' (n) := eval (db n) (ctx := {}) (>> p x, p y <<).clauses
-#check List.toSSet
 def db (n : Nat) : Data := Data.ofTuples $
   List.range n |>.map fun n => ⟨"p", #[.entity n []]⟩
 
@@ -182,13 +183,14 @@ def a_1 : Atom := ⟨"ev1", ["x"]⟩
 def a_2 : Atom := ⟨"ev2", ["x"]⟩
 def a_3 : Atom := ⟨"ev3", ["y"]⟩
 def a_4 : Atom := ⟨"ev4", ["x"]⟩
-def e2 : Effect := ⟨ [], [], [[a_2]]⟩
-def e3 : Effect := ⟨ [], [], [[a_3]]⟩
-def e4 : Effect := ⟨ [], [], [[a_4]]⟩
-def r (name : String) (g : Atom) (a : List Atom) (e : Effect) : Rule := (name, [g], .step .all a $ .effect e)
-def r1 : Rule := ("r1", [a_1], .step .all [] $ .effect e2)
+def e2 : Query := .effect [] [] [a_2] .nil
+def e3 : Query := .effect [] [] [a_3] .nil
+def e4 : Query := .effect [] [] [a_4] .nil
+def r (name : String) (g : Atom) (a : List Atom) (e : Query) : Rule := (name, [g], .step .all a e)
+def r1 : Rule := ("r1", [a_1], .step .all [] $ e2)
 def p1 : Program := [r1]
-def p2 : Program := [r "1" a_1 [] e2, r "2" a_1 [a1, a2] e3, r "3" a_2 [a_3] e4]
+def p2 : Program :=
+  [r "1" a_1 [] e2, r "2" a_1 [a1, a2] e3, r "3" a_2 [a_3] e4]
 
 def t1 : Tuple := ⟨"ev1", #[.nat 0]⟩
 def d0 : Data := Data.ofTuples [⟨"p", #[0]⟩, ⟨"q", #[0, 1]⟩]
@@ -196,14 +198,11 @@ def d1 : Data := Data.ofTuples [⟨"ev1", #[0]⟩]
 def s1 : State := .new .seq ⟨d1, #[]⟩
 def f1 : Frame := ⟨d1, #[]⟩
 
---#eval eval_aux d1 (List.toAssocList []) #[] [a_3] |> toString
---#eval eval d1 (List.toAssocList []) [⟨ "p", ["x"]⟩] |> toString
-
 def State.adv (n : Nat) (p : Program) : State → State
 | s => s.advanceFix p ⟨d0, #[]⟩ n |>.run' 0
 
-#eval let s := s1.adv 30 p2; (s.terminal, s.frame, s.pp)
-#eval let s := s1.adv 30 p2; IO.print s.pp
+#eval let s := s1.adv 40 p2; (s.terminal, s.frame, s.pp)
+#eval let s := s1.adv 40 p2; IO.print s.pp
 
 def test1 := let s := s1.adv 30 p2; IO.print s.pp
 

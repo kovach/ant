@@ -34,12 +34,15 @@ instance : ToString Value where
   | .nat n => toString n
   | .entity id _ => s!"#{toString id}"
 
-open Std
-abbrev PartialBinding := SmallMap Var (Option Value)
-instance : ToString PartialBinding := ⟨fun l => l.toList |> toString⟩
-abbrev        Binding := SmallMap Var Value
+instance (n : Nat) : OfNat Value n := ⟨ .entity n [] ⟩
 
-def PartialBinding.toBinding : PartialBinding → Binding := fun c => c.mapVal fun _ v => v.get!
+open Std
+--abbrev PartialBinding := SmallMap Var (Option Value)
+--instance : ToString PartialBinding := ⟨fun l => l.toList |> toString⟩
+abbrev        Binding := SmallMap Var Value
+instance : ToString Binding := ⟨fun l => l.toList |> toString⟩
+
+--def PartialBinding.toBinding : PartialBinding → Binding := fun c => c.mapVal fun _ v => v.get!
 
 --inductive Expr | value (value : Value) | var (var : Var)
 
@@ -47,20 +50,17 @@ structure Atom where
   relation : Relation
   vars : List Var
 
---inductive Effect
---| newVars (v : List Var) (cont : Effect)
---| newTuples (v : List Tuple) (cont : Effect)
---| nil
-
-structure Effect where
-  new : List Var
-  free : List Var
-  value : List (List Atom)
+--structure Effect where
+--  new : List Var
+--  free : List Var
+--  value : List (List Atom)
 
 inductive SubqueryType | all | chooseOne -- | count (var : Var) -- | chooseAtMost (limit : Var)
+
 inductive Query
 | step (type : SubqueryType) (v : List Atom) (cont : Query)
-| effect (e : Effect)
+| effect (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
+| nil
 
 structure Tuple where
   relation : Relation
@@ -141,20 +141,19 @@ def doNewVars (ctr : Nat) (config : Binding) (new : List Var) : Nat × Binding :
 
 def doNewTuples (config : Binding) (effect : List Atom) : List Tuple := effect.map (Atom.subst config)
 
--- todo remove?
-def doEffect (ctr : Nat) (config : Binding) (new : List Var) (effect : List Atom) : Nat × List Tuple :=
-  let (n, config) := doNewVars ctr config new
-  (n, effect.map (Atom.subst config))
-
 def Data.insert : Data → Tuple → Data := fun d t => d.add t.relation t
 
 def Data.ofTuples : List Tuple → Data := fun ts => ts.foldl Data.insert {}
 
 def World.add (w : World) (v : Data) : World := { w with tuples := w.tuples.mergeWith v (f := fun _ v v' => v ++ v') }
 
-def World.effect (w : World) (new : List Var) (effect : List Atom)
-    (config : Binding) : World :=
-  let (n, tuples) := doEffect w.counter config new effect
-  {counter := n, tuples := tuples.foldl (init := w.tuples) Data.insert}
+-- todo remove?
+--def doEffect (ctr : Nat) (config : Binding) (new : List Var) (effect : List Atom) : Nat × List Tuple :=
+--  let (n, config) := doNewVars ctr config new
+--  (n, effect.map (Atom.subst config))
+--def World.effect (w : World) (new : List Var) (effect : List Atom)
+--    (config : Binding) : World :=
+--  let (n, tuples) := doEffect w.counter config new effect
+--  {counter := n, tuples := tuples.foldl (init := w.tuples) Data.insert}
 end Effect
 end Ant
