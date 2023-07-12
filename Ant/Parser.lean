@@ -17,6 +17,7 @@ declare_syntax_cat ant_expr
 declare_syntax_cat ant_atom
 
 syntax antIdent : ant_expr
+syntax num : ant_expr
 syntax antIdent ant_expr* : ant_atom
 syntax "[ant|" ant "]" : term
 syntax "[ant|" ant_atom,* "]" : term
@@ -29,7 +30,8 @@ def str : TSyntax `Foo → MacroM (TSyntax `term) := fun x =>
   | x => `($(quote x))
 
 macro_rules
-| `([ant_expr| $n:antIdent]) => str n -- `($(quote $ str n))
+| `([ant_expr| $n:num]) => `(Expr.val (Literal.nat $n))
+| `([ant_expr| $n:antIdent]) => do `(Expr.var $(← str n))
 
 | `([ant| $atoms:ant_atom,*]) => do
   let vs ← atoms.getElems.mapM fun e => `([ant_atom| $e])
@@ -39,7 +41,7 @@ macro_rules
   let vs ← vs.mapM fun e => `([ant_expr| $e])
   `(Atom.mk (Relation.base $(← str n)) [$vs,*])
 
-#check [ant| first a b, ok-then?! b c]
+#check [ant| first a b, ok-then?! b 3]
 
 /- e.g.
 want-activate ev p c | in-play c; choose: player-action-target-from? p c target source; do: activate ev c, target ev l.
@@ -91,7 +93,7 @@ macro_rules
 #reduce [ant_body| p1 a b; choose: p2 b c]
 #reduce [ant_body| p1 a b; choose: p2 b c; do: p3]
 #reduce [ant_body| p1 a b; choose: p2 b c; do +(x): p3 x]
-#reduce [ant_body| p1 a b; choose: p2 b c; do -(x y) +(z): p3 z]
+#reduce [ant_body| p1 a b; choose: p2 b c; do -(x y) +(z): p 3 z 4]
 
 declare_syntax_cat ant_rule
 
@@ -102,6 +104,6 @@ macro_rules
 | `([ant_rule| $n:antIdent : $guard:ant_atom,* | $body:ant_body .]) => do
     `(($(← str n), [ant_atoms| $guard,*], [ant_body| $body]))
 
-#reduce [ant_rule| name: ev _ _ | p1 a b; choose: p2 c b, p2 b c; do +(x): p3' x.]
+#reduce [ant_rule| name: ev _ _ | p1 a b; choose: p c b 3 5, p b c; do +(x): p' 3 x 4 .]
 
 end Ant

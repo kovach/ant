@@ -44,11 +44,14 @@ instance : ToString Binding := ⟨fun l => l.toList |> toString⟩
 
 --def PartialBinding.toBinding : PartialBinding → Binding := fun c => c.mapVal fun _ v => v.get!
 
---inductive Expr | value (value : Value) | var (var : Var)
+inductive Literal | nat (n : Nat)
+inductive Expr | val (val : Literal) | var (var : Var)
+
+instance : Coe String Expr := ⟨.var⟩
 
 structure Atom where
   relation : Relation
-  vars : List Var
+  vars : List Expr
 
 --structure Effect where
 --  new : List Var
@@ -111,7 +114,7 @@ structure Frame where
   removed : Array Id
 deriving Inhabited
 
-instance : ToString Frame := ⟨ fun ⟨ts, rem⟩ => s!"({toString ts.toList}, -{toString rem})}" ⟩
+instance : ToString Frame := ⟨ fun ⟨ts, rem⟩ => s!"({toString ts.toList}, -{toString rem})" ⟩
 
 instance : EmptyCollection Frame := ⟨ {}, {} ⟩
 
@@ -131,8 +134,16 @@ def Binding.toCause : Binding → List Id := fun b => b.toList.filterMap fun (_,
   | .entity id _ => some id
   | _ => none
 
+def Expr.eval (ctx : Binding) : Expr → Value
+| var v => ctx.find! v
+| val (.nat n) => .nat n
+
+def Expr.eval? (ctx : Binding) : Expr → Option Value
+| var v => ctx.find? v
+| val (.nat n) => some $ .nat n
+
 def Atom.subst (config : Binding) (c : Atom) : Tuple :=
-  ⟨ c.relation, c.vars.map config.find! |>.toArray ⟩
+  ⟨ c.relation, c.vars.map (Expr.eval config) |>.toArray ⟩
 
 def doNewVars (ctr : Nat) (config : Binding) (new : List Var) : Nat × Binding :=
   let cause := config.toCause
