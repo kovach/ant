@@ -5,6 +5,23 @@ import Std.Data.RBMap
 
 open Std (AssocList HashMap)
 
+namespace Array
+def splitAt (n : Nat) (as : Array α) : Array α × Array α :=
+  Prod.snd $ as.foldl (init := (n, #[], #[])) fun (n, as, bs) a =>
+    match n with
+    | 0 => (n, as, bs.push a)
+    | n+1 => (n, as.push a, bs)
+
+def splitAt' (n : Nat) (as : Array α) : Array α × Option α × Array α :=
+  Prod.snd $ as.foldl (init := (n, #[], none, #[])) fun (n, as, val, bs) a =>
+    match n, val with
+    | 0, none => (n, as, some a, bs)
+    | 0, _ => (n, as, val, bs.push a)
+    | n+1, _ => (n, as.push a, val, bs)
+end Array
+
+
+
 namespace List
 def toHashSet (l : List a) [BEq a] [Hashable a] : Lean.HashSet a := l.foldl Lean.HashSet.insert {}
 end List

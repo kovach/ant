@@ -12,7 +12,7 @@ def antIdent : Parser := -- {{{
   withAntiquot (mkAntiquot "antIdent" `Foo) {
     fn := fun c s =>
       let startPos := s.pos
-      let s := takeWhile1Fn (fun c => c.isAlphanum || "_-?!".contains c) "error??" c s
+      let s := takeWhile1Fn (fun c => c.isAlphanum || "_-?!'".contains c) "error??" c s
       mkNodeToken `Foo startPos c s } -- }}}
 
 @[combinator_formatter antIdent] def text.formatter : Formatter := pure ()

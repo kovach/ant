@@ -162,13 +162,29 @@ def State.advance (p : Program) (w : Frame) : State → M State
     | .chooseOne => node .chooseOne none w nodes
 | s => pure $ invalid "cannot advance" s
 
-partial def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
+def State.nextChoice : State → Option (Array State)
+| node _ none _ cs => some cs
+| node _ (some c) _ _ => c.nextChoice
+| _ => none
+
+def State.applyChoice (k : Nat) : State → State
+| node type none f cs =>
+   match cs.splitAt' k with
+   | (pre, some c, post) =>
+     match type with
+     | .chosenSeq => node .chosenSeq none f (pre ++ post)
+     | .chooseOne => c
+     | .seq => panic! "cannot choose order of this node"
+    | _ => panic! "invalid choice index"
+| node type (some c) f cs => node type (some $ c.applyChoice k) f cs
+| _ => panic! "internal error applyChoice"
+
+def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
 | 0, s => pure s
 | n+1, s => do
-  let s' ← s.advance p w
-  match s' with
+  match (← s.advance p w) with
   | invalid .. => pure s
-  | _ => s'.advanceFix p w n
+  | s' => s'.advanceFix p w n
 
 def db (n : Nat) : Data := Data.ofTuples $
   List.range n |>.map fun n => ⟨"p", #[.entity n []]⟩
