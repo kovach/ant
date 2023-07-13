@@ -114,7 +114,7 @@ structure Frame where
   removed : Array Id
 deriving Inhabited
 
-instance : ToString Frame := ⟨ fun ⟨ts, rem⟩ => s!"({toString ts.toList}, -{toString rem})" ⟩
+instance : ToString Frame := ⟨ fun ⟨ts, rem⟩ => s!"({toString $ ts.toList.map fun (k, v) => (k, v.tuples.size)}, -{toString rem})" ⟩
 
 instance : EmptyCollection Frame := ⟨ {}, {} ⟩
 
@@ -122,8 +122,10 @@ def Tuple.refers (t : Tuple) (id : Id) := t.tuple.any fun | .entity i _ => decid
 -- eagerly remove freed tuples
 def Frame.append : Frame → Frame → Frame
 | ⟨t₁, f₁⟩, ⟨t₂, f₂⟩ =>
-  let t₁' := if f₂.size = 0 then t₁ else t₁.mapVal fun _ v => v.filter fun t => f₂.any fun id => t.refers id
-  ⟨t₁' ++ t₂, f₁ ++ f₂⟩
+  let t₁' := if f₂.size = 0 then t₁ else t₁.mapVal fun _ v => v.filter fun t => not $ f₂.any fun id => t.refers id
+  -- todo: what's happening?
+  let f' := f₁ ++ f₂.filter fun v => not $ f₁.contains v
+  ⟨t₁' ++ t₂, f'⟩
 instance : Append Frame := ⟨Frame.append⟩
 
 section Effect

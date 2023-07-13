@@ -93,9 +93,15 @@ abbrev Guard := List Atom
 abbrev Rule := String × Guard × Query
 abbrev Program := List Rule
 
-abbrev M := StateM Nat
-def fresh : M Id := modifyGet fun s => (s, s+1)
+abbrev M := StateM (Nat × Array String)
+def fresh : M Id := modifyGet fun (s, out) => (s, s+1, out)
 def freshStr : M String := do let n ← fresh; pure s!"v{n}"
+def trace (msg : String) : M Unit := modifyGet fun (s, out) => ((), s, out.push msg)
+-- temp
+def M.run (m : M a) : IO a := do
+  let (out, _, trace) := StateT.run m (0, #[])
+  trace.forM IO.println
+  pure out
 
 inductive State
 | node    (type : C) (focus : Option State) (now : Frame) (children : Array State)
@@ -105,16 +111,20 @@ inductive State
 | nil
 deriving Inhabited
 
-partial def State.pp (s : State) : String :=
-  match s with
-  | node t none f cs => s!"(node {t} none {f} {cs.map State.pp})"
-  | node t focus f cs =>
-    let x := match focus with | none =>  "" | some v => s!"{v.pp} "
-    s!"(node {t} {x} {f} {cs.map State.pp})"
-  | new _ f => s!"(new {f})"
-  | query name .. => s!"(query {name})"
-  | nil => "nil"
-  | invalid msg s => s!"\n\n\n(invalid ({msg}): {s.pp})\n\n\n"
+deriving instance Repr for C
+deriving instance Repr for Literal
+deriving instance Repr for Expr
+deriving instance Repr for Atom
+deriving instance Repr for SubqueryType
+deriving instance Repr for Query
+deriving instance Repr for Array
+deriving instance Repr for Relation
+deriving instance Repr for Tuple
+deriving instance Repr for RelationSet
+deriving instance Repr for Frame
+deriving instance Repr for State
+
+def State.pp (s : State) : String := reprStr s
 
 inductive Choice | index (n : ℕ)
 
@@ -133,15 +143,37 @@ partial def State.frame : State → Frame
 -- | node /-todo?-/ _ cs => cs.map State.frame |>.foldl Frame.append {}
 | _ => {}
 
+partial def State.activeFrame : State → Frame
+| node _ (some s) _ _ => s.activeFrame
+| node _ none f _ => f
+| _ => {}
+
 def doEffect
     (name : String) (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
     (ctx : Binding) (w : Frame) : M State := do
   let ctx' ← newVars ctx new
+  trace s!"doEffect {ctx} / {ctx'} // {free}"
   let created := doNewTuples ctx' value
-  let freed := free.filterMap fun v => match ctx.find! v with | .entity n _ => some n | _ => panic! s!"type error: [{v}] refers to non-entity" -- hmm
+  let freed ← free.mapM fun v => do
+    match ctx.find? v with
+    | some (.entity n _) => pure $ some n
+    | some _ =>  do
+      trace s!"error: [{v}] refers to non-entity in ctx {ctx}"
+      pure none
+    | none => do
+      trace s!"error: [{v}] is unbound in ctx {ctx}"
+      pure none
+  let freed := freed.filterMap id
+  trace s!"freed?: {freed}"
   let newNode : State := .new default ⟨Data.ofTuples created, freed.toArray⟩
   let node : State := .node .seq none w #[.query name ctx' cont, newNode]
   pure node
+
+def State.choiceBlocked : State → Bool
+| node .chooseOne .. => true
+| node .chosenSeq .. => true
+| node _ (some s) _ _ => s.choiceBlocked
+| _ => false
 
 def State.advance (p : Program) (w : Frame) : State → M State
 | s@(node .seq none w' cs) => pure $ match cs.back? with
@@ -150,7 +182,8 @@ def State.advance (p : Program) (w : Frame) : State → M State
 | node t (some s) w' s' =>
   if s.terminal then pure $ node t none (w' ++ s.frame) s'
   else do pure $ node t (some (← s.advance p w')) w' s'
-| new type delta =>
+| new type delta => do
+  trace $ s!"new: {delta}"
   let now := w ++ delta
   let states : Array State := List.foldl Array.append #[] $
     p.map fun (name, guard, q) => (eval_aux delta.tuples {} #[] guard).map fun ctx => query name ctx q
@@ -186,6 +219,7 @@ def State.applyChoice (k : Nat) : State → State
 def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
 | 0, s => pure s
 | n+1, s => do
+  if s.choiceBlocked then pure s else
   match (← s.advance p w) with
   | invalid .. => pure s
   | s' => s'.advanceFix p w n
@@ -195,7 +229,6 @@ def db (n : Nat) : Data := Data.ofTuples $
 
 def q_ (n) := eval (db n) (ctx := {}) [⟨ "p", ["x"]⟩, ⟨"p", ["y"]⟩]
 #eval q_ 10 |>.size
-#eval q_ 2 |> toString
 
 def a1 : Atom := ⟨"p", ["x"]⟩
 def a2 : Atom := ⟨"q", ["x", "y"]⟩
@@ -218,14 +251,35 @@ def d1 : Data := Data.ofTuples [⟨"ev1", #[0]⟩]
 def s1 : State := .new .seq ⟨d1, #[]⟩
 def f1 : Frame := ⟨d1, #[]⟩
 
-def State.adv (n : Nat) (p : Program) : State → State
-| s => s.advanceFix p ⟨d0, #[]⟩ n |>.run' 0
+def State.adv (n : Nat) (p : Program) : State → IO State
+| s => s.advanceFix p ⟨d0, #[]⟩ n |>.run
 
-#eval let s := s1.adv 40 p2; (s.terminal, s.frame, s.pp)
-#eval let s := s1.adv 40 p2; IO.print s.pp
+--#eval let s := s1.adv 40 p2; (s.terminal, s.frame, s.pp)
+--#eval let s := s1.adv 40 p2; IO.print s.pp
+--def test1 := let s := s1.adv 30 p2; IO.print s.pp
 
-def test1 := let s := s1.adv 30 p2; IO.print s.pp
+abbrev StandardProgram := Program × Program
+
+def evalThread (n : Nat) : List Nat → StandardProgram → IO State
+| moves, (init, program) =>
+
+  let program := program.reverse
+
+  let rec aux : List Nat → Program → State → M State
+  | [], _, s => pure s
+  | c :: cs, p, s => do
+    let s' ← s.advanceFix p {} n
+    aux cs p $ s'.applyChoice c
+
+  -- assumes `guard` for each initial rule is empty
+  let setup : State := .node .seq none {} $ init.toArray.reverse.map fun (name, _, q) => State.query name {} q
+
+  let comp := do
+    --let s₀ ← setup.advanceFix program {} n
+    let s' ← aux moves program setup
+    let s' ← s'.advanceFix program {} n
+    pure s'
+
+  comp.run
 
 end Ant
-
-def main : IO Unit := Ant.test1

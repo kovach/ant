@@ -5,6 +5,10 @@ import Std.Data.RBMap
 
 open Std (AssocList HashMap)
 
+instance [Repr a] [Repr b] : Repr (AssocList a b) := ⟨fun l n => reprPrec l.toList n⟩
+instance [BEq a] [Hashable a] [Repr a] [Repr b] : Repr (HashMap a b) := ⟨(reprPrec ·.toList)⟩
+instance [BEq a] [Hashable a] [Repr a] : Repr (Lean.HashSet a) := ⟨(reprPrec ·.toList)⟩
+
 namespace Array
 def splitAt (n : Nat) (as : Array α) : Array α × Array α :=
   Prod.snd $ as.foldl (init := (n, #[], #[])) fun (n, as, bs) a =>

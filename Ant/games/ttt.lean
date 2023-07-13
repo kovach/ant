@@ -3,6 +3,8 @@ import Ant.Eval
 
 namespace Ant
 
+-- todo: fix number parsing
+
 def ttt_init_grid : Rule := [ant_rule| init-grid:
   |
     do: row 1, row 2, row 3, col 1, col 2, col 3;
@@ -16,9 +18,10 @@ def ttt_init_turn : Rule := [ant_rule| init-turn:
 ]
 
 def ttt_turn : Rule := [ant_rule| game-loop:
-  turn now m | choose: empty e r c; opponent m m';
-  do -(now e) +(next): mark r c m, turn next m'.
+  turn now m | opponent m m'; choose: empty space r c;
+  do -(now space) +(next): mark r c m, turn next m'.
 ]
+#reduce ttt_turn
 
 def ttt_win_conditions : List Rule := [
   [ant_rule| win_row:    mark _ _ _ | mark r 1 m, mark r 2 m, mark r 3 m; do: win m.],
