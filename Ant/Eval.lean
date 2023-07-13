@@ -258,7 +258,10 @@ def State.adv (n : Nat) (p : Program) : State → IO State
 --#eval let s := s1.adv 40 p2; IO.print s.pp
 --def test1 := let s := s1.adv 30 p2; IO.print s.pp
 
+-- initialization rules × game rules
 abbrev StandardProgram := Program × Program
+
+def Program.parse (p : Program) : StandardProgram := p.partition fun (_, guard, _) => guard.length = 0
 
 def evalThread (n : Nat) : List Nat → StandardProgram → IO State
 | moves, (init, program) =>

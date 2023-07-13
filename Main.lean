@@ -22,4 +22,4 @@ def gameLoop (p : StandardProgram) (moveList : List Nat) (stepBound := 100) := d
   IO.println ".."
   IO.println $ reprStr $ s.activeFrame.tuples
 
-#eval gameLoop ttt [0,0,0,0,0,0,0,0,0]
+#eval gameLoop ttt [0,0,0,0,0,0,0,0/-win-/, 0]
