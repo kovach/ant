@@ -6,6 +6,14 @@ namespace Ant
 
 open Std (AssocList HashMap)
 
+def Binding.unify (ctx : Binding) (e : Expr) (v : Value) : Option Binding :=
+match e with
+| .var name =>
+  match e.eval? ctx with
+  | none => some $ ctx.cons name v
+  | some v' => if v' = v then some ctx else none
+| _ => let v' := e.eval ctx; if v' = v then some ctx else none
+
 def eval_aux' (db : Data) (ctx : Binding) (acc : Array Binding) (k : Binding → Array Binding → List Atom → Array Binding)
     : Atom → List Atom → Array Binding
 | c, cs =>
@@ -19,48 +27,20 @@ def eval_aux' (db : Data) (ctx : Binding) (acc : Array Binding) (k : Binding →
       for (i, v) in c.vars.enum do
         match ctx' with
           | none => pure ()
-          | some ctx =>
-            match v with
-            | .var name =>
-              match v.eval? ctx with
-              | none => ctx' := some  $ ctx.cons name (t.2.get! i)
-              | some v' => if v' = t.2.get! i then pure () else ctx' := none
-            | _ => let v' := v.eval ctx; if v' = t.2.get! i then pure () else ctx' := none
+          | some ctx => ctx' := ctx.unify v (t.2.get! i)
       match ctx' with
       | none => pure ()
       -- recurse
       | some ctx => results := k ctx results cs
     pure results
 
--- todo remove?
-def eval_aux (db : Data) (ctx : Binding) (acc : Array Binding)
+partial def eval_aux (db : Data) (ctx : Binding) (acc : Array Binding)
     : List Atom → Array Binding
 | [] => acc.push ctx
-| c :: cs =>
-  match db.find? c.relation with
-  | none => #[]
-  | some ⟨ts⟩ => Id.run do
-    let mut results := acc
-    for t in ts do
-      let mut ctx' := some ctx
-      -- assert/add bindings
-      for (i, v) in c.vars.enum do
-        match ctx' with
-          | none => pure ()
-          | some ctx =>
-            match v with
-            | .var name =>
-              match v.eval? ctx with
-              | none => ctx' := some  $ ctx.cons name (t.2.get! i)
-              | some v' => if v' = t.2.get! i then pure () else ctx' := none
-            | _ => let v' := v.eval ctx; if v' = t.2.get! i then pure () else ctx' := none
-      match ctx' with
-      | none => pure ()
-      -- recurse
-      | some ctx => results := eval_aux db ctx results cs
-    pure results
+| c :: cs => eval_aux' db ctx acc (eval_aux db) c cs
 
 -- returns all matches (once) that involve at least one tuple from `new`
+-- ! not currently used !
 partial def seminaive (old new total : Data) (ctx : Binding) (acc : Array Binding) : List Atom → Array Binding
 | [] => acc -- never matched new tuple, current ctx invalid
 | [c] => -- small optimization
@@ -91,15 +71,6 @@ abbrev StandardProgram := Program × Program
 
 def Program.parse (p : Program) : StandardProgram := p.partition fun (_, guard, _) => guard.length = 0
 
-abbrev M := StateM (Nat × Array String)
-def fresh : M Id := modifyGet fun (s, out) => (s, s+1, out)
-def freshStr : M String := do let n ← fresh; pure s!"v{n}"
-def trace (msg : String) : M Unit := modifyGet fun (s, out) => ((), s, out.push msg)
-def M.run (m : M a) : IO a := do -- todo, remove IO
-  let (out, _, trace) := StateT.run m (0, #[])
-  trace.forM IO.println
-  pure out
-
 inductive State
 | node    (type : C) (focus : Option State) (now : Frame) (children : Array State)
 | new     (type : C) (delta : Frame)
@@ -110,12 +81,6 @@ deriving Inhabited, Repr
 
 def State.pp (s : State) : String := reprStr s
 
-inductive Choice | index (n : ℕ)
-
-def newVars (config : Binding) (new : List Var) : M Binding :=
-  let cause := config.toCause
-  new.foldlM (init := config) fun ctx v => do { let e ← fresh; pure $ ctx.cons v (.entity e cause) }
-
 def State.terminal : State → Bool
 | node _ none _ cs => cs.size == 0
 | query _ _ .nil => true
@@ -124,7 +89,7 @@ def State.terminal : State → Bool
 -- only valid for terminal States
 partial def State.frame : State → Frame
 | node _ none f _ => f
--- | node /-todo?-/ _ cs => cs.map State.frame |>.foldl Frame.append {}
+/- | node /-todo?-/ _ cs => cs.map State.frame |>.foldl Frame.append {} -/
 | _ => {}
 
 partial def State.activeFrame : State → Frame
@@ -148,11 +113,6 @@ def doEffect (name : String) (new : List Var) (free : List Var) (value : List At
   let node : State := .node .seq none w #[.query name ctx' cont, newNode]
   pure node
 
-def State.choiceBlocked : State → Bool
-| node .chooseOne .. | node .chosenSeq .. => true
-| node _ (some s) _ _ => s.choiceBlocked
-| _ => false
-
 def State.advance (p : Program) (w : Frame) : State → M State
 | s@(node .seq none w' cs) => pure $ match cs.back? with
   | none => invalid "internal error" s -- should match higher level
@@ -169,6 +129,12 @@ def State.advance (p : Program) (w : Frame) : State → M State
 | s@(query name ctx q) =>
   match q with
   | .nil => pure $ .invalid "cannot advance nil query" s
+  | .subquery q k => pure $ .node .seq (.some $ .query name ctx q) w #[.query name ctx k]
+  | .count expr q k =>
+    let count := eval w.tuples ctx q |>.size -- todo optimization: don't reify array
+    match ctx.unify expr (.val (.nat count)) with
+    | some ctx' => pure $ .query name ctx' k
+    | none => pure .nil
   | .effect n f atoms k => doEffect name n f atoms k ctx w
   | .step type q qs => pure $
     let nodes : Array State := eval w.tuples ctx q |>.map fun b => .query name b qs
@@ -194,6 +160,11 @@ def State.applyChoice (k : Nat) : State → State
 | node type (some c) f cs => node type (some $ c.applyChoice k) f cs
 | _ => panic! "internal error applyChoice"
 
+def State.choiceBlocked : State → Bool
+| node .chooseOne .. | node .chosenSeq .. => true
+| node _ (some s) _ _ => s.choiceBlocked
+| _ => false
+
 def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
 | 0, s => pure s
 | n+1, s => do
@@ -213,11 +184,9 @@ def evalThread (n : Nat) : List Nat → StandardProgram → IO State
     let s' ← s.advanceFix p {} n
     aux cs p $ s'.applyChoice c
 
-  -- assumes `guard` for each initial rule is empty
   let setup : State := .node .seq none {} $ init.toArray.reverse.map fun (name, _, q) => State.query name {} q
 
   let comp := do
-    --let s₀ ← setup.advanceFix program {} n
     let s' ← aux moves program setup
     let s' ← s'.advanceFix program {} n
     pure s'

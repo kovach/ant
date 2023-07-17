@@ -62,12 +62,14 @@ activate ev c | flash-flood c, target ev l; do: dmg ev l 1; coastal l; do dmg ev
 declare_syntax_cat ant_clause
 declare_syntax_cat ant_body
 
+syntax "count" ant_expr ":" ant_atom,* : ant_clause
 syntax ant_atom,* : ant_clause
 syntax "choose:" ant_atom,* : ant_clause
 syntax "do:" ant_atom,* : ant_clause
 syntax "do" ("-(" antIdent,* ")")? ("+(" antIdent,* ")")? ":" ant_atom,* : ant_clause
 syntax ant_clause : ant_body
 syntax ant_clause ";" ant_body : ant_body
+syntax "(" ant_body ")" : ant_clause
 syntax "[ant_clause|" ant_clause "]" : term
 syntax "[ant_body|" ant_body "]" : term
 syntax "[ant_atoms|" ant_atom,* "]" : term
@@ -84,6 +86,11 @@ macro_rules
     `(fun k => Query.step .chooseOne [ant_atoms| $atoms,*] k)
 | `([ant_clause| do: $atoms:ant_atom,*]) => do
     `(fun k => Query.effect [] [] [ant_atoms| $atoms,*] k)
+
+| `([ant_clause| count $n : $atoms:ant_atom,*]) => do
+    `(fun k => Query.count [ant_expr| $n] [ant_atoms| $atoms,*] k)
+
+| `([ant_clause| ( $q:ant_body )]) => `(fun k => Query.subquery [ant_body| $q] k)
 
 -- do-type clause has optional list of *destroyed* (free) entities and *created* (new) entities
 | `([ant_clause| do $[-($free:antIdent,*)]? $[+( $new:antIdent,* )]? : $atoms:ant_atom,*]) => do
@@ -102,6 +109,9 @@ macro_rules
 #reduce [ant_body| p1 a b; choose: p2 b c; do: p3]
 #reduce [ant_body| p1 a b; choose: p2 b c; do +(x): p3 x]
 #reduce [ant_body| p1 a b; choose: p2 b c; do -(x, y) +(z): p 3 z 4]
+#reduce [ant_body| p x; count n: q x y ]
+#reduce [ant_body| p x; count 3 : q x y ]
+#reduce [ant_body| p x; ( q x y; do: out y )]
 
 declare_syntax_cat ant_rule
 

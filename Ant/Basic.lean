@@ -25,7 +25,12 @@ instance : Coe String Relation := ⟨ .base ⟩
 abbrev Id := Nat
 
 inductive Literal | nat (n : Nat) | sym (s : String)
-deriving Inhabited, DecidableEq, Repr, BEq, Hashable
+  deriving Inhabited, DecidableEq, Repr, BEq, Hashable
+
+instance : ToString Literal where
+  toString
+  | .nat n => toString n
+  | .sym s => "#" ++ s
 
 inductive Value
 | val    (value : Literal)
@@ -34,7 +39,7 @@ deriving Inhabited, DecidableEq, Repr, BEq, Hashable
 
 instance : ToString Value where
   toString
-  | .val n => reprStr n
+  | .val n => toString n
   | .entity id _ => s!"#{toString id}"
 
 instance (n : Nat) : OfNat Value n := ⟨ .entity n [] ⟩
@@ -54,8 +59,10 @@ structure Atom where
 inductive SubqueryType | all | chooseOne -- | count (var : Var) -- | chooseAtMost (limit : Var)
 
 inductive Query
-| step (type : SubqueryType) (v : List Atom) (cont : Query)
+| step (type : SubqueryType) (value : List Atom) (cont : Query)
 | effect (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
+| subquery (q : Query) (cont : Query)
+| count (var : Expr) (value : List Atom) (cont : Query)
 | nil
 
 structure Tuple where
@@ -63,11 +70,19 @@ structure Tuple where
   tuple : Array Value
 deriving BEq, Hashable
 
-def Relation.toString : Relation → String
-| .base s => s
-| .subquery r n => toString r ++ s!".{n}"
+instance : ToString Relation where
+  toString s :=
+  let rec f
+  | .base s => s
+  | .subquery s n => f s ++ s!".{n}"
+  f s
 
-instance : ToString Relation := ⟨ Relation.toString ⟩
+-- todo learn how to write instances for this
+instance : ToString Tuple where
+  toString := fun ⟨r, vs⟩ => s!"({toString r} {" ".intercalate $ vs.toList.map toString})"
+
+instance : Repr Tuple where
+  reprPrec t _ := .text $ toString t
 
 instance : ToString Tuple := ⟨ fun ⟨rel, vs⟩ => s!"({toString rel}, {vs.map toString |>.toList |> " ".intercalate})" ⟩
 
@@ -146,6 +161,19 @@ def doNewVars (ctr : Nat) (config : Binding) (new : List Var) : Nat × Binding :
   let config := new.foldr (init := (ctr, config)) fun v (n, config) => (n+1, config.cons v (.entity n cause))
   config
 
+abbrev M := StateM (Nat × Array String)
+def fresh : M Id := modifyGet fun (s, out) => (s, s+1, out)
+def freshStr : M String := do let n ← fresh; pure s!"v{n}"
+def trace (msg : String) : M Unit := modifyGet fun (s, out) => ((), s, out.push msg)
+def M.run (a : Type _) (m : M a) : IO a := do -- todo, remove IO
+  let (out, _, trace) := StateT.run m (0, #[])
+  trace.forM IO.println
+  pure out
+
+def newVars (config : Binding) (new : List Var) : M Binding :=
+  let cause := config.toCause
+  new.foldlM (init := config) fun ctx v => do { let e ← fresh; pure $ ctx.cons v (.entity e cause) }
+
 def doNewTuples (config : Binding) (effect : List Atom) : List Tuple := effect.map (Atom.subst config)
 
 def Data.insert : Data → Tuple → Data := fun d t => d.add t.relation t
@@ -167,7 +195,7 @@ deriving instance Repr for SubqueryType
 deriving instance Repr for Query
 deriving instance Repr for Array
 deriving instance Repr for Relation
-deriving instance Repr for Tuple
+--deriving instance Repr for Tuple
 deriving instance Repr for RelationSet
 deriving instance Repr for Frame
 
