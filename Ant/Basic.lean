@@ -24,27 +24,25 @@ instance : Coe String Relation := ⟨ .base ⟩
 
 abbrev Id := Nat
 
+inductive Literal | nat (n : Nat) | sym (s : String)
+deriving Inhabited, DecidableEq, Repr, BEq, Hashable
+
 inductive Value
-| nat    (value : Nat)
+| val    (value : Literal)
 | entity (id : Id) (cause : List Id) -- todo, fullbindings?
 deriving Inhabited, DecidableEq, Repr, BEq, Hashable
 
 instance : ToString Value where
   toString
-  | .nat n => toString n
+  | .val n => reprStr n
   | .entity id _ => s!"#{toString id}"
 
 instance (n : Nat) : OfNat Value n := ⟨ .entity n [] ⟩
 
 open Std
---abbrev PartialBinding := SmallMap Var (Option Value)
---instance : ToString PartialBinding := ⟨fun l => l.toList |> toString⟩
 abbrev        Binding := SmallMap Var Value
 instance : ToString Binding := ⟨fun l => l.toList |> toString⟩
 
---def PartialBinding.toBinding : PartialBinding → Binding := fun c => c.mapVal fun _ v => v.get!
-
-inductive Literal | nat (n : Nat)
 inductive Expr | val (val : Literal) | var (var : Var)
 
 instance : Coe String Expr := ⟨.var⟩
@@ -52,11 +50,6 @@ instance : Coe String Expr := ⟨.var⟩
 structure Atom where
   relation : Relation
   vars : List Expr
-
---structure Effect where
---  new : List Var
---  free : List Var
---  value : List (List Atom)
 
 inductive SubqueryType | all | chooseOne -- | count (var : Var) -- | chooseAtMost (limit : Var)
 
@@ -119,6 +112,7 @@ instance : ToString Frame := ⟨ fun ⟨ts, rem⟩ => s!"({toString $ ts.toList.
 instance : EmptyCollection Frame := ⟨ {}, {} ⟩
 
 def Tuple.refers (t : Tuple) (id : Id) := t.tuple.any fun | .entity i _ => decide (i = id) | _ => false
+
 -- eagerly remove freed tuples
 def Frame.append : Frame → Frame → Frame
 | ⟨t₁, f₁⟩, ⟨t₂, f₂⟩ =>
@@ -138,11 +132,11 @@ def Binding.toCause : Binding → List Id := fun b => b.toList.filterMap fun (_,
 
 def Expr.eval (ctx : Binding) : Expr → Value
 | var v => ctx.find! v
-| val (.nat n) => .nat n
+| val lit => .val lit
 
 def Expr.eval? (ctx : Binding) : Expr → Option Value
 | var v => ctx.find? v
-| val (.nat n) => some $ .nat n
+| val lit => some $ .val lit
 
 def Atom.subst (config : Binding) (c : Atom) : Tuple :=
   ⟨ c.relation, c.vars.map (Expr.eval config) |>.toArray ⟩
@@ -160,13 +154,21 @@ def Data.ofTuples : List Tuple → Data := fun ts => ts.foldl Data.insert {}
 
 def World.add (w : World) (v : Data) : World := { w with tuples := w.tuples.mergeWith v (f := fun _ v v' => v ++ v') }
 
--- todo remove?
---def doEffect (ctr : Nat) (config : Binding) (new : List Var) (effect : List Atom) : Nat × List Tuple :=
---  let (n, config) := doNewVars ctr config new
---  (n, effect.map (Atom.subst config))
---def World.effect (w : World) (new : List Var) (effect : List Atom)
---    (config : Binding) : World :=
---  let (n, tuples) := doEffect w.counter config new effect
---  {counter := n, tuples := tuples.foldl (init := w.tuples) Data.insert}
 end Effect
+
+-- todo: simultaneous
+inductive C | seq | chosenSeq | chooseOne
+
+deriving instance Repr for C
+deriving instance Repr for Literal
+deriving instance Repr for Expr
+deriving instance Repr for Atom
+deriving instance Repr for SubqueryType
+deriving instance Repr for Query
+deriving instance Repr for Array
+deriving instance Repr for Relation
+deriving instance Repr for Tuple
+deriving instance Repr for RelationSet
+deriving instance Repr for Frame
+
 end Ant

@@ -76,14 +76,8 @@ partial def seminaive (old new total : Data) (ctx : Binding) (acc : Array Bindin
 def eval (db : Data) (ctx : Binding) : List Atom → Array Binding := eval_aux db ctx #[]
 def seminaive_eval (old new total : Data) (ctx : Binding) : List Atom → Array Binding := seminaive old new total ctx #[]
 
--- todo: simultaneous
-inductive C | seq | chosenSeq | chooseOne
-
 instance : ToString C where
-  toString
-  | .seq => "seq"
-  | .chosenSeq => "chosenSeq"
-  | .chooseOne => "choose"
+  toString | .seq => "seq" | .chosenSeq => "chosenSeq" | .chooseOne => "choose"
 
 instance C.Inhabited : Inhabited C := ⟨.seq⟩
 
@@ -92,13 +86,16 @@ abbrev Time := Frame × Delta
 abbrev Guard := List Atom
 abbrev Rule := String × Guard × Query
 abbrev Program := List Rule
+-- initialization rules × game rules
+abbrev StandardProgram := Program × Program
+
+def Program.parse (p : Program) : StandardProgram := p.partition fun (_, guard, _) => guard.length = 0
 
 abbrev M := StateM (Nat × Array String)
 def fresh : M Id := modifyGet fun (s, out) => (s, s+1, out)
 def freshStr : M String := do let n ← fresh; pure s!"v{n}"
 def trace (msg : String) : M Unit := modifyGet fun (s, out) => ((), s, out.push msg)
--- temp
-def M.run (m : M a) : IO a := do
+def M.run (m : M a) : IO a := do -- todo, remove IO
   let (out, _, trace) := StateT.run m (0, #[])
   trace.forM IO.println
   pure out
@@ -109,20 +106,7 @@ inductive State
 | query   (n : String) (ctx : Binding) (q : Query)
 | invalid (error : String) (cause : State)
 | nil
-deriving Inhabited
-
-deriving instance Repr for C
-deriving instance Repr for Literal
-deriving instance Repr for Expr
-deriving instance Repr for Atom
-deriving instance Repr for SubqueryType
-deriving instance Repr for Query
-deriving instance Repr for Array
-deriving instance Repr for Relation
-deriving instance Repr for Tuple
-deriving instance Repr for RelationSet
-deriving instance Repr for Frame
-deriving instance Repr for State
+deriving Inhabited, Repr
 
 def State.pp (s : State) : String := reprStr s
 
@@ -148,8 +132,7 @@ partial def State.activeFrame : State → Frame
 | node _ none f _ => f
 | _ => {}
 
-def doEffect
-    (name : String) (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
+def doEffect (name : String) (new : List Var) (free : List Var) (value : List Atom) (cont : Query)
     (ctx : Binding) (w : Frame) : M State := do
   let ctx' ← newVars ctx new
   trace s!"doEffect {ctx} / {ctx'} // {free}"
@@ -157,12 +140,8 @@ def doEffect
   let freed ← free.mapM fun v => do
     match ctx.find? v with
     | some (.entity n _) => pure $ some n
-    | some _ =>  do
-      trace s!"error: [{v}] refers to non-entity in ctx {ctx}"
-      pure none
-    | none => do
-      trace s!"error: [{v}] is unbound in ctx {ctx}"
-      pure none
+    | some _ =>  trace s!"error: [{v}] refers to non-entity in ctx {ctx}"; pure none
+    | none => trace s!"error: [{v}] is unbound in ctx {ctx}"; pure none
   let freed := freed.filterMap id
   trace s!"freed?: {freed}"
   let newNode : State := .new default ⟨Data.ofTuples created, freed.toArray⟩
@@ -170,8 +149,7 @@ def doEffect
   pure node
 
 def State.choiceBlocked : State → Bool
-| node .chooseOne .. => true
-| node .chosenSeq .. => true
+| node .chooseOne .. | node .chosenSeq .. => true
 | node _ (some s) _ _ => s.choiceBlocked
 | _ => false
 
@@ -223,45 +201,6 @@ def State.advanceFix (p : Program) (w : Frame) : Nat → State → M State
   match (← s.advance p w) with
   | invalid .. => pure s
   | s' => s'.advanceFix p w n
-
-def db (n : Nat) : Data := Data.ofTuples $
-  List.range n |>.map fun n => ⟨"p", #[.entity n []]⟩
-
-def q_ (n) := eval (db n) (ctx := {}) [⟨ "p", ["x"]⟩, ⟨"p", ["y"]⟩]
-#eval q_ 10 |>.size
-
-def a1 : Atom := ⟨"p", ["x"]⟩
-def a2 : Atom := ⟨"q", ["x", "y"]⟩
-def a_1 : Atom := ⟨"ev1", ["x"]⟩
-def a_2 : Atom := ⟨"ev2", ["x"]⟩
-def a_3 : Atom := ⟨"ev3", ["y"]⟩
-def a_4 : Atom := ⟨"ev4", ["x"]⟩
-def e2 : Query := .effect [] [] [a_2] .nil
-def e3 : Query := .effect [] [] [a_3] .nil
-def e4 : Query := .effect [] [] [a_4] .nil
-def r (name : String) (g : Atom) (a : List Atom) (e : Query) : Rule := (name, [g], .step .all a e)
-def r1 : Rule := ("r1", [a_1], .step .all [] $ e2)
-def p1 : Program := [r1]
-def p2 : Program :=
-  [r "1" a_1 [] e2, r "2" a_1 [a1, a2] e3, r "3" a_2 [a_3] e4]
-
-def t1 : Tuple := ⟨"ev1", #[.nat 0]⟩
-def d0 : Data := Data.ofTuples [⟨"p", #[0]⟩, ⟨"q", #[0, 1]⟩]
-def d1 : Data := Data.ofTuples [⟨"ev1", #[0]⟩]
-def s1 : State := .new .seq ⟨d1, #[]⟩
-def f1 : Frame := ⟨d1, #[]⟩
-
-def State.adv (n : Nat) (p : Program) : State → IO State
-| s => s.advanceFix p ⟨d0, #[]⟩ n |>.run
-
---#eval let s := s1.adv 40 p2; (s.terminal, s.frame, s.pp)
---#eval let s := s1.adv 40 p2; IO.print s.pp
---def test1 := let s := s1.adv 30 p2; IO.print s.pp
-
--- initialization rules × game rules
-abbrev StandardProgram := Program × Program
-
-def Program.parse (p : Program) : StandardProgram := p.partition fun (_, guard, _) => guard.length = 0
 
 def evalThread (n : Nat) : List Nat → StandardProgram → IO State
 | moves, (init, program) =>

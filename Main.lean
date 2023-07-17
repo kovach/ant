@@ -1,10 +1,11 @@
 import Ant.Eval
 import Ant.games.ttt
+import Socket
 
 open Ant
 
 def init_test : Rule := [ant_rule| INIT:
-  | do +(x y): row x, row y . ]
+  | do +(x, y): row x, row y . ]
 
 def turn_test : Rule := [ant_rule| TURN:
   row x | choose: row y; do -(y) +(z): other z . ]
@@ -22,4 +23,7 @@ def gameLoop (p : StandardProgram) (moveList : List Nat) (stepBound := 100) := d
   IO.println ".."
   IO.println $ reprStr $ s.activeFrame.tuples
 
+def main : IO Unit := pure ()
+
 #eval gameLoop ttt [0,0,0,0,0,0,0,0/-win-/, 0]
+--#eval gameLoop test [1]

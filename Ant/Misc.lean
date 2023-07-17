@@ -1,7 +1,7 @@
 import Std.Data.AssocList
 import Std.Data.HashMap
-import Std.Lean.HashSet
 import Std.Data.RBMap
+import Std.Lean.HashSet
 
 open Std (AssocList HashMap)
 
@@ -10,6 +10,7 @@ instance [BEq a] [Hashable a] [Repr a] [Repr b] : Repr (HashMap a b) := ⟨(repr
 instance [BEq a] [Hashable a] [Repr a] : Repr (Lean.HashSet a) := ⟨(reprPrec ·.toList)⟩
 
 namespace Array
+
 def splitAt (n : Nat) (as : Array α) : Array α × Array α :=
   Prod.snd $ as.foldl (init := (n, #[], #[])) fun (n, as, bs) a =>
     match n with
@@ -22,15 +23,13 @@ def splitAt' (n : Nat) (as : Array α) : Array α × Option α × Array α :=
     | 0, none => (n, as, some a, bs)
     | 0, _ => (n, as, val, bs.push a)
     | n+1, _ => (n, as.push a, val, bs)
+
 end Array
-
-
 
 namespace List
 def toHashSet (l : List a) [BEq a] [Hashable a] : Lean.HashSet a := l.foldl Lean.HashSet.insert {}
 end List
 
-#check List.toHashSet
 namespace Std
 abbrev SmallMap (k v : Type _) := AssocList k  v
 
